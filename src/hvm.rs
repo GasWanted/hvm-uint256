@@ -23,6 +23,13 @@ pub type AVal = AtomicU32;
 pub struct APort(pub AVal);
 pub struct APair(pub AtomicU64);
 
+// U256 Value: 256-bit unsigned integer stored as 8 x 32-bit limbs (little-endian)
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct U256Val {
+  pub limbs: [u32; 8], // limbs[0] = least significant
+}
+
 // Number
 pub struct Numb(pub Val);
 const U24_MAX : u32 = (1 << 24) - 1;
@@ -74,6 +81,7 @@ pub const OP_SHL : Tag = 0x13;
 pub const FP_SHL : Tag = 0x14;
 pub const OP_SHR : Tag = 0x15;
 pub const FP_SHR : Tag = 0x16;
+pub const TY_U256 : Tag = 0x17;
 
 // Constants
 pub const FREE : Port = Port(0x0);
@@ -269,17 +277,32 @@ impl Numb {
     f32::from_bits((self.0 << 3) & 0xFFFFFF00)
   }
 
+  // U256: 256-bit unsigned integer (heap-indexed)
+
+  pub fn new_u256(idx: u32) -> Self {
+    Numb((idx << 5) as Val | (TY_U256 as Val))
+  }
+
+  pub fn get_u256(&self) -> u32 {
+    (self.0 >> 5) as u32
+  }
+
   // Gets the numeric type.
   pub fn get_typ(&self) -> Tag {
     (self.0 & 0x1F) as Tag
   }
 
   pub fn is_num(&self) -> bool {
-    self.get_typ() >= TY_U24 && self.get_typ() <= TY_F24
+    let typ = self.get_typ();
+    (typ >= TY_U24 && typ <= TY_F24) || typ == TY_U256
   }
 
   pub fn is_cast(&self) -> bool {
-    self.get_typ() == TY_SYM && self.get_sym() >= TY_U24 && self.get_sym() <= TY_F24
+    let typ = self.get_typ();
+    typ == TY_SYM && {
+      let sym = self.get_sym();
+      (sym >= TY_U24 && sym <= TY_F24) || sym == TY_U256
+    }
   }
 
   // Partial application.
