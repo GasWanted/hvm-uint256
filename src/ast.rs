@@ -48,6 +48,7 @@ impl<'i> CoreParser<'i> {
 
     // numeric casts
     if let Some(cast) = match () {
+      _ if self.try_consume("u256") => Some(hvm::TY_U256),
       _ if self.try_consume("u24") => Some(hvm::TY_U24),
       _ if self.try_consume("i24") => Some(hvm::TY_I24),
       _ if self.try_consume("f24") => Some(hvm::TY_F24),
@@ -241,6 +242,7 @@ impl Numb {
         hvm::TY_U24 => "[u24]".to_string(),
         hvm::TY_I24 => "[i24]".to_string(),
         hvm::TY_F24 => "[f24]".to_string(),
+        hvm::TY_U256 => "[u256]".to_string(),
         // operations
         hvm::OP_ADD => "[+]".to_string(),
         hvm::OP_SUB => "[-]".to_string(),
@@ -284,6 +286,10 @@ impl Numb {
         } else {
           format!("{:?}", val)
         }
+      }
+      hvm::TY_U256 => {
+        let idx = numb.get_u256();
+        format!("[u256:{}]", idx)
       }
       _ => {
         let typ = numb.get_typ();
