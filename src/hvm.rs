@@ -465,36 +465,73 @@ impl Numb {
   //                saturating if out of range and 0 if NaN
   // - i24  -> f24,
   //   u24  -> f24: casts to the "closest" float representing this integer.
-  pub fn cast(a: Self, b: Self) -> Self {
+  pub fn cast(a: Self, b: Self, u256_heap: &mut [U256Val], tm: &mut TMem, net: &GNet) -> Self {
     match (a.get_sym(), b.get_typ()) {
       (TY_U24, TY_U24) => b,
       (TY_U24, TY_I24) => Self::new_u24(b.get_i24() as u32),
       (TY_U24, TY_F24) => Self::new_u24((b.get_f24() as u32).clamp(U24_MIN, U24_MAX)),
+      (TY_U24, TY_U256) => {
+        let val = u256_heap[b.get_u256() as usize];
+        Self::new_u24(val.limbs[0] & 0x00FFFFFF)
+      }
 
       (TY_I24, TY_U24) => Self::new_i24(b.get_u24() as i32),
       (TY_I24, TY_I24) => b,
       (TY_I24, TY_F24) => Self::new_i24((b.get_f24() as i32).clamp(I24_MIN, I24_MAX)),
+      (TY_I24, TY_U256) => {
+        let val = u256_heap[b.get_u256() as usize];
+        Self::new_i24((val.limbs[0] & 0x00FFFFFF) as i32)
+      }
 
       (TY_F24, TY_U24) => Self::new_f24(b.get_u24() as f32),
       (TY_F24, TY_I24) => Self::new_f24(b.get_i24() as f32),
       (TY_F24, TY_F24) => b,
-      // invalid cast
+      (TY_F24, TY_U256) => {
+        let val = u256_heap[b.get_u256() as usize];
+        Self::new_f24(val.limbs[0] as f32)
+      }
+
+      (TY_U256, TY_U24) => {
+        let val = U256Val::from_u32(b.get_u24());
+        let idx = tm.u256_alloc(net);
+        u256_heap[idx as usize] = val;
+        Self::new_u256(idx)
+      }
+      (TY_U256, TY_I24) => {
+        let v = b.get_i24();
+        let val = if v < 0 {
+          U256Val::sub(&U256Val::ZERO, &U256Val::from_u32((-v) as u32))
+        } else {
+          U256Val::from_u32(v as u32)
+        };
+        let idx = tm.u256_alloc(net);
+        u256_heap[idx as usize] = val;
+        Self::new_u256(idx)
+      }
+      (TY_U256, TY_F24) => {
+        let v = b.get_f24();
+        let val = if v.is_nan() || v < 0.0 { U256Val::ZERO } else { U256Val::from_u32(v as u32) };
+        let idx = tm.u256_alloc(net);
+        u256_heap[idx as usize] = val;
+        Self::new_u256(idx)
+      }
+      (TY_U256, TY_U256) => b,
+
       (_, _) => Self::new_u24(0),
     }
   }
 
-  pub fn operate(a: Self, b: Self) -> Self {
-    //println!("operate {} {}", crate::ast::Numb(a.0).show(), crate::ast::Numb(b.0).show());
+  pub fn operate(a: Self, b: Self, u256_heap: &mut [U256Val], tm: &mut TMem, net: &GNet) -> Self {
     let at = a.get_typ();
     let bt = b.get_typ();
     if at == TY_SYM && bt == TY_SYM {
       return Numb::new_u24(0);
     }
     if a.is_cast() && b.is_num() {
-      return Numb::cast(a, b);
+      return Numb::cast(a, b, u256_heap, tm, net);
     }
     if b.is_cast() && a.is_num() {
-      return Numb::cast(b, a);
+      return Numb::cast(b, a, u256_heap, tm, net);
     }
     if at == TY_SYM && bt != TY_SYM {
       return Numb::partial(a, b);
@@ -581,6 +618,37 @@ impl Numb {
           OP_SHR => Numb::new_f24((av + bv).tan()),
           _      => unreachable!(),
         }
+      }
+      TY_U256 => {
+        let ai = a.get_u24(); // upper 27 bits from partial application, used as heap index
+        let bi = b.get_u256();
+        let av = u256_heap[ai as usize];
+        let bv = u256_heap[bi as usize];
+        let result = match op {
+          OP_ADD => U256Val::add(&av, &bv),
+          OP_SUB => U256Val::sub(&av, &bv),
+          FP_SUB => U256Val::sub(&bv, &av),
+          OP_MUL => U256Val::mul(&av, &bv),
+          OP_DIV => U256Val::div(&av, &bv),
+          FP_DIV => U256Val::div(&bv, &av),
+          OP_REM => U256Val::rem(&av, &bv),
+          FP_REM => U256Val::rem(&bv, &av),
+          OP_EQ  => return Numb::new_u24(U256Val::eq(&av, &bv) as u32),
+          OP_NEQ => return Numb::new_u24(!U256Val::eq(&av, &bv) as u32),
+          OP_LT  => return Numb::new_u24(U256Val::lt(&av, &bv) as u32),
+          OP_GT  => return Numb::new_u24(U256Val::gt(&av, &bv) as u32),
+          OP_AND => U256Val::and(&av, &bv),
+          OP_OR  => U256Val::or(&av, &bv),
+          OP_XOR => U256Val::xor(&av, &bv),
+          OP_SHL => U256Val::shl(&av, bv.limbs[0]),
+          FP_SHL => U256Val::shl(&bv, av.limbs[0]),
+          OP_SHR => U256Val::shr(&av, bv.limbs[0]),
+          FP_SHR => U256Val::shr(&bv, av.limbs[0]),
+          _      => U256Val::ZERO,
+        };
+        let idx = tm.u256_alloc(net);
+        u256_heap[idx as usize] = result;
+        Numb::new_u256(idx)
       }
       _ => Numb::new_u24(0),
     }
@@ -1008,7 +1076,11 @@ impl TMem {
     // Performs operation.
     if b1.get_tag() == NUM {
       let bv = b1.get_val();
-      let cv = Numb::operate(Numb(av), Numb(bv));
+      // SAFETY: Each thread operates on its own partition of the u256 heap.
+      let u256_heap = unsafe {
+        std::slice::from_raw_parts_mut(net.u256.as_ptr() as *mut U256Val, net.ulen)
+      };
+      let cv = Numb::operate(Numb(av), Numb(bv), u256_heap, self, net);
       self.link_pair(net, Pair::new(Port::new(NUM, cv.0), b2));
     } else {
       net.node_create(self.nloc[0], Pair::new(Port::new(a.get_tag(), Numb(a.get_val()).0), b2));
