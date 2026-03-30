@@ -46,6 +46,14 @@ impl<'i> CoreParser<'i> {
   pub fn parse_numb_sym(&mut self) -> ParseResult<Numb> {
     self.consume("[")?;
 
+    // U256 literal: [u256 <heap_index>]
+    if self.try_consume("u256 ") {
+      self.skip_trivia();
+      let idx = self.parse_u64()? as u32;
+      self.consume("]")?;
+      return Ok(Numb(hvm::Numb::new_u256(idx).0));
+    }
+
     // numeric casts
     if let Some(cast) = match () {
       _ if self.try_consume("u256") => Some(hvm::TY_U256),
@@ -289,7 +297,7 @@ impl Numb {
       }
       hvm::TY_U256 => {
         let idx = numb.get_u256();
-        format!("[u256:{}]", idx)
+        format!("[u256 {}]", idx)
       }
       _ => {
         let typ = numb.get_typ();
