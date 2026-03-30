@@ -30,6 +30,150 @@ pub struct U256Val {
   pub limbs: [u32; 8], // limbs[0] = least significant
 }
 
+impl U256Val {
+  pub const ZERO: U256Val = U256Val { limbs: [0; 8] };
+  pub const ONE: U256Val = U256Val { limbs: [1, 0, 0, 0, 0, 0, 0, 0] };
+  pub const MAX: U256Val = U256Val { limbs: [u32::MAX; 8] };
+
+  pub fn from_u32(val: u32) -> Self {
+    U256Val { limbs: [val, 0, 0, 0, 0, 0, 0, 0] }
+  }
+
+  pub fn is_zero(&self) -> bool {
+    self.limbs.iter().all(|&x| x == 0)
+  }
+
+  pub fn add(a: &U256Val, b: &U256Val) -> U256Val {
+    let mut result = [0u32; 8];
+    let mut carry: u64 = 0;
+    for i in 0..8 {
+      let sum = a.limbs[i] as u64 + b.limbs[i] as u64 + carry;
+      result[i] = sum as u32;
+      carry = sum >> 32;
+    }
+    U256Val { limbs: result }
+  }
+
+  pub fn sub(a: &U256Val, b: &U256Val) -> U256Val {
+    let mut result = [0u32; 8];
+    let mut borrow: u64 = 0;
+    for i in 0..8 {
+      let diff = a.limbs[i] as u64 + 0x1_0000_0000 - b.limbs[i] as u64 - borrow;
+      result[i] = diff as u32;
+      borrow = 1 - (diff >> 32);
+    }
+    U256Val { limbs: result }
+  }
+
+  pub fn mul(a: &U256Val, b: &U256Val) -> U256Val {
+    let mut result = [0u32; 8];
+    for i in 0..8 {
+      let mut carry: u64 = 0;
+      for j in 0..8 {
+        if i + j < 8 {
+          let prod = a.limbs[i] as u64 * b.limbs[j] as u64 + result[i + j] as u64 + carry;
+          result[i + j] = prod as u32;
+          carry = prod >> 32;
+        }
+      }
+    }
+    U256Val { limbs: result }
+  }
+
+  pub fn eq(a: &U256Val, b: &U256Val) -> bool {
+    a.limbs == b.limbs
+  }
+
+  pub fn lt(a: &U256Val, b: &U256Val) -> bool {
+    for i in (0..8).rev() {
+      if a.limbs[i] < b.limbs[i] { return true; }
+      if a.limbs[i] > b.limbs[i] { return false; }
+    }
+    false
+  }
+
+  pub fn gt(a: &U256Val, b: &U256Val) -> bool {
+    U256Val::lt(b, a)
+  }
+
+  pub fn gte(a: &U256Val, b: &U256Val) -> bool {
+    !U256Val::lt(a, b)
+  }
+
+  pub fn and(a: &U256Val, b: &U256Val) -> U256Val {
+    let mut r = [0u32; 8];
+    for i in 0..8 { r[i] = a.limbs[i] & b.limbs[i]; }
+    U256Val { limbs: r }
+  }
+
+  pub fn or(a: &U256Val, b: &U256Val) -> U256Val {
+    let mut r = [0u32; 8];
+    for i in 0..8 { r[i] = a.limbs[i] | b.limbs[i]; }
+    U256Val { limbs: r }
+  }
+
+  pub fn xor(a: &U256Val, b: &U256Val) -> U256Val {
+    let mut r = [0u32; 8];
+    for i in 0..8 { r[i] = a.limbs[i] ^ b.limbs[i]; }
+    U256Val { limbs: r }
+  }
+
+  pub fn shl(a: &U256Val, shift: u32) -> U256Val {
+    if shift >= 256 { return U256Val::ZERO; }
+    let word_shift = (shift / 32) as usize;
+    let bit_shift = shift % 32;
+    let mut result = [0u32; 8];
+    for i in word_shift..8 {
+      result[i] = a.limbs[i - word_shift] << bit_shift;
+      if bit_shift > 0 && i > word_shift {
+        result[i] |= a.limbs[i - word_shift - 1] >> (32 - bit_shift);
+      }
+    }
+    U256Val { limbs: result }
+  }
+
+  pub fn shr(a: &U256Val, shift: u32) -> U256Val {
+    if shift >= 256 { return U256Val::ZERO; }
+    let word_shift = (shift / 32) as usize;
+    let bit_shift = shift % 32;
+    let mut result = [0u32; 8];
+    for i in 0..(8 - word_shift) {
+      result[i] = a.limbs[i + word_shift] >> bit_shift;
+      if bit_shift > 0 && i + word_shift + 1 < 8 {
+        result[i] |= a.limbs[i + word_shift + 1] << (32 - bit_shift);
+      }
+    }
+    U256Val { limbs: result }
+  }
+
+  // Binary long division. Returns (quotient, remainder). Div by zero returns (ZERO, ZERO).
+  pub fn div_rem(a: &U256Val, b: &U256Val) -> (U256Val, U256Val) {
+    if b.is_zero() { return (U256Val::ZERO, U256Val::ZERO); }
+    if a.is_zero() { return (U256Val::ZERO, U256Val::ZERO); }
+    let mut quotient = U256Val::ZERO;
+    let mut remainder = U256Val::ZERO;
+    for i in (0..256).rev() {
+      remainder = U256Val::shl(&remainder, 1);
+      let word = i / 32;
+      let bit = i % 32;
+      remainder.limbs[0] |= (a.limbs[word] >> bit) & 1;
+      if U256Val::gte(&remainder, b) {
+        remainder = U256Val::sub(&remainder, b);
+        quotient.limbs[word] |= 1 << bit;
+      }
+    }
+    (quotient, remainder)
+  }
+
+  pub fn div(a: &U256Val, b: &U256Val) -> U256Val {
+    U256Val::div_rem(a, b).0
+  }
+
+  pub fn rem(a: &U256Val, b: &U256Val) -> U256Val {
+    U256Val::div_rem(a, b).1
+  }
+}
+
 // Number
 pub struct Numb(pub Val);
 const U24_MAX : u32 = (1 << 24) - 1;
