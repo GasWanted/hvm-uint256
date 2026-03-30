@@ -98,8 +98,10 @@ pub struct RBag {
 pub struct GNet<'a> {
   pub nlen: usize, // length of the node buffer
   pub vlen: usize, // length of the vars buffer
+  pub ulen: usize, // length of the u256 heap
   pub node: &'a mut [APair], // node buffer
   pub vars: &'a mut [APort], // vars buffer
+  pub u256: &'a mut [U256Val], // u256 value heap
   pub itrs: AtomicU64, // interaction count
 }
 
@@ -111,6 +113,7 @@ pub struct TMem {
   pub itrs: u32, // interaction count
   pub nput: usize, // next node allocation index
   pub vput: usize, // next vars allocation index
+  pub uput: usize, // next u256 allocation index
   pub nloc: Vec<usize>, // allocated node locations
   pub vloc: Vec<usize>, // allocated vars locations
   pub rbag: RBag, // local redex bag
@@ -476,13 +479,20 @@ impl RBag {
 
 impl<'a> GNet<'a> {
   pub fn new(nlen: usize, vlen: usize) -> Self {
+    let ulen = 1 << 20; // 1M u256 values = 32MB
     let nlay = Layout::array::<APair>(nlen).unwrap();
     let vlay = Layout::array::<APort>(vlen).unwrap();
+    let ulay = Layout::array::<U256Val>(ulen).unwrap();
     let nptr = unsafe { alloc(nlay) as *mut APair };
     let vptr = unsafe { alloc(vlay) as *mut APort };
+    let uptr = unsafe { alloc(ulay) as *mut U256Val };
     let node = unsafe { std::slice::from_raw_parts_mut(nptr, nlen) };
     let vars = unsafe { std::slice::from_raw_parts_mut(vptr, vlen) };
-    GNet { nlen, vlen, node, vars, itrs: AtomicU64::new(0) }
+    let u256 = unsafe { std::slice::from_raw_parts_mut(uptr, ulen) };
+    for val in u256.iter_mut() {
+      *val = U256Val::default();
+    }
+    GNet { nlen, vlen, ulen, node, vars, u256, itrs: AtomicU64::new(0) }
   }
 
   pub fn node_create(&self, loc: usize, val: Pair) {
@@ -555,12 +565,13 @@ impl<'a> Drop for GNet<'a> {
   fn drop(&mut self) {
     let nlay = Layout::array::<APair>(self.nlen).unwrap();
     let vlay = Layout::array::<APair>(self.vlen).unwrap();
+    let ulay = Layout::array::<U256Val>(self.ulen).unwrap();
     unsafe {
       dealloc(self.node.as_mut_ptr() as *mut u8, nlay);
       dealloc(self.vars.as_mut_ptr() as *mut u8, vlay);
+      dealloc(self.u256.as_mut_ptr() as *mut u8, ulay);
     }
   }
-
 }
 
 impl TMem {
@@ -573,10 +584,25 @@ impl TMem {
       itrs: 0,
       nput: 0,
       vput: 0,
+      uput: 0,
       nloc: vec![0; 0xFFF], // FIXME: move to a constant
       vloc: vec![0; 0xFFF],
       rbag: RBag::new(),
     }
+  }
+
+  // Allocates a single U256 value on the heap. Returns the index.
+  pub fn u256_alloc(&mut self, net: &GNet) -> u32 {
+    let per_thread = net.ulen / self.tids as usize;
+    let start = per_thread * self.tid as usize;
+    let end = start + per_thread;
+    for _ in 0..per_thread {
+      self.uput = start + ((self.uput - start + 1) % per_thread);
+      if net.u256[self.uput] == U256Val::default() {
+        return self.uput as u32;
+      }
+    }
+    panic!("U256 heap exhausted");
   }
 
   pub fn node_alloc(&mut self, net: &GNet, num: usize) -> usize {
