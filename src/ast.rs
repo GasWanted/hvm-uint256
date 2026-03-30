@@ -296,6 +296,8 @@ impl Numb {
         }
       }
       hvm::TY_U256 => {
+        // In show(), we don't have heap access. Output [u256 idx] format.
+        // Use show_with_heap() for resolved display.
         let idx = numb.get_u256();
         format!("[u256 {}]", idx)
       }
@@ -329,7 +331,43 @@ impl Numb {
   }
 }
 
+impl Numb {
+  /// Display a Numb with heap access for resolving U256 values.
+  pub fn show_resolved(&self, heap: &[hvm::U256Val]) -> String {
+    let numb = hvm::Numb(self.0);
+    if numb.get_typ() == hvm::TY_U256 {
+      let idx = numb.get_u256() as usize;
+      if idx < heap.len() {
+        let val = &heap[idx];
+        let mut hex = String::new();
+        for i in (0..8).rev() {
+          hex.push_str(&format!("{:08x}", val.limbs[i]));
+        }
+        let trimmed = hex.trim_start_matches('0');
+        if trimmed.is_empty() { "0x0".to_string() } else { format!("0x{}", trimmed) }
+      } else {
+        format!("[u256 {}]", idx)
+      }
+    } else {
+      self.show()
+    }
+  }
+}
+
 impl Tree {
+  pub fn show_resolved(&self, heap: &[hvm::U256Val]) -> String {
+    match self {
+      Tree::Num { val } => val.show_resolved(heap),
+      Tree::Var { nam } => nam.to_string(),
+      Tree::Ref { nam } => format!("@{}", nam),
+      Tree::Era => "*".to_string(),
+      Tree::Con { fst, snd } => format!("({} {})", fst.show_resolved(heap), snd.show_resolved(heap)),
+      Tree::Dup { fst, snd } => format!("{{{} {}}}", fst.show_resolved(heap), snd.show_resolved(heap)),
+      Tree::Opr { fst, snd } => format!("$({} {})", fst.show_resolved(heap), snd.show_resolved(heap)),
+      Tree::Swi { fst, snd } => format!("?({} {})", fst.show_resolved(heap), snd.show_resolved(heap)),
+    }
+  }
+
   pub fn show(&self) -> String {
     match self {
       Tree::Var { nam } => nam.to_string(),

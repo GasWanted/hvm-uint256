@@ -182,7 +182,7 @@ pub fn run(book: &hvm::Book) {
 
   // Prints the result
   if let Some(tree) = ast::Net::readback(&net, book) {
-    println!("Result: {}", tree.show());
+    println!("Result: {}", tree.root.show_resolved(&net.u256));
   } else {
     println!("Readback failed. Printing GNet memdump...\n");
     println!("{}", net.show());

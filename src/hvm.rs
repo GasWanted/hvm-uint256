@@ -539,13 +539,17 @@ impl Numb {
     if at != TY_SYM && bt == TY_SYM {
       return Numb::partial(b, a);
     }
-    if at >= OP_ADD && bt >= OP_ADD {
+    // Helper: is this tag an operator (not a value type)?
+    let is_op = |t: Tag| t >= OP_ADD && t <= FP_SHR;
+    let at_is_op = is_op(at);
+    let bt_is_op = is_op(bt);
+    if at_is_op && bt_is_op {
       return Numb::new_u24(0);
     }
-    if at < OP_ADD && bt < OP_ADD {
+    if !at_is_op && !bt_is_op {
       return Numb::new_u24(0);
     }
-    let (op, a, ty, b) = if at >= OP_ADD { (at, a, bt, b) } else { (bt, b, at, a) };
+    let (op, a, ty, b) = if at_is_op { (at, a, bt, b) } else { (bt, b, at, a) };
     match ty {
       TY_U24 => {
         let av = a.get_u24();

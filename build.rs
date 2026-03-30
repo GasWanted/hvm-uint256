@@ -22,8 +22,8 @@ fn main() {
     }
   }
 
-  // Builds hvm.cu
-  if std::process::Command::new("nvcc").arg("--version").stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok() {
+  // Builds hvm.cu (disabled — CUDA headers not available)
+  if false && std::process::Command::new("nvcc").arg("--version").stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok() {
     if let Ok(cuda_path) = std::env::var("CUDA_HOME") {
       println!("cargo:rustc-link-search=native={}/lib64", cuda_path);
     } else {
